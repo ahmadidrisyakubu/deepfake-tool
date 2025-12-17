@@ -1,0 +1,11 @@
+# Git LFS managed files (don't ignore these!)
+#!*.keras
+
+# Do ignore these
+__pycache__/
+*.pyc
+uploads/*
+*.log
+.env
+security.log
+.DS_Store
