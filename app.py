@@ -16,7 +16,6 @@ import os
 import time
 import base64
 import hashlib
-import magic
 import logging
 import secrets
 import html
