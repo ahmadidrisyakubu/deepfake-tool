@@ -113,14 +113,21 @@ def validate_file_security(file):
         errors.append("Invalid file extension")
 
     try:
-        mime = magic.from_buffer(file.read(1024), mime=True)
+        from PIL import Image
+        # Try to open as image to validate
+        img = Image.open(file)
+        img.verify()  # Verify it's a valid image
+        file.seek(0)  # Reset file pointer
+        
+        # Check if it's JPEG or PNG by checking format
+        if img.format not in ['JPEG', 'PNG', 'JPG']:
+            errors.append(f"Invalid image format: {img.format}")
+    except Exception as e:
+        errors.append(f"Invalid image file: {str(e)}")
+    finally:
         file.seek(0)
-        if mime not in ALLOWED_MIME_TYPES:
-            errors.append(f"Invalid MIME type: {mime}")
-    except Exception:
-        errors.append("MIME validation failed")
 
-    return errors
+    return errors 
 
 def generate_file_hash(path):
     h = hashlib.sha256()
