@@ -5,7 +5,6 @@ from flask_wtf.csrf import CSRFProtect
 from flask_wtf import FlaskForm
 from wtforms import FileField
 from wtforms.validators import DataRequired
-from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing import image
 from werkzeug.utils import secure_filename
 from functools import wraps
@@ -57,14 +56,25 @@ logging.basicConfig(
 )
 
 # ===============================
-# Load model
+# Load TFLite model
 # ===============================
 try:
-    model = load_model("best_xception_model_finetuned.keras")
-    logging.info("Model loaded successfully")
+    # Load TFLite model
+    interpreter = tf.lite.Interpreter(model_path="xception_quantized.tflite")
+    interpreter.allocate_tensors()
+    logging.info("TFLite model loaded successfully")
+    
+    # Get model details
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    logging.info(f"Input shape: {input_details[0]['shape']}")
+    logging.info(f"Output shape: {output_details[0]['shape']}")
+    
 except Exception as e:
     logging.error(f"Model load failed: {e}")
-    model = None
+    interpreter = None
+    input_details = None
+    output_details = None
 
 # ===============================
 # Constants
@@ -136,14 +146,38 @@ def generate_file_hash(path):
     return h.hexdigest()
 
 def predict_image(path):
-    if not model:
+    if not interpreter:
         raise Exception("Model not loaded")
 
+    # Load and preprocess image
     img = image.load_img(path, target_size=(299, 299))
     arr = image.img_to_array(img)
     arr = np.expand_dims(arr, axis=0) / 255.0
+    
+    # Ensure correct dtype for quantized model
+    if input_details[0]['dtype'] == np.uint8:
+        # Quantized model expects uint8 input
+        arr = (arr * 255).astype(np.uint8)
+    else:
+        # Float model expects float32
+        arr = arr.astype(np.float32)
 
-    pred = float(model.predict(arr, verbose=0)[0][0])
+    # Set input tensor
+    interpreter.set_tensor(input_details[0]['index'], arr)
+    
+    # Run inference
+    interpreter.invoke()
+    
+    # Get output tensor
+    output = interpreter.get_tensor(output_details[0]['index'])
+    
+    # Handle quantized output if needed
+    if output_details[0]['dtype'] == np.uint8:
+        # Dequantize output
+        scale, zero_point = output_details[0]['quantization']
+        output = scale * (output.astype(np.float32) - zero_point)
+    
+    pred = float(output[0][0])
     label = "Real" if pred > 0.5 else "Fake"
     confidence = pred if pred > 0.5 else 1 - pred
 
@@ -220,5 +254,5 @@ if __name__ == "__main__":
     app.run(
         debug=False,
         host="127.0.0.1",
-        port=5000
+        port=int(os.environ.get("PORT", 5000))
     )
