@@ -1,6 +1,7 @@
 from flask import Flask, request, render_template, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_limiter.errors import RateLimitExceeded
 from flask_wtf.csrf import CSRFProtect
 from flask_wtf import FlaskForm
 from wtforms import FileField
@@ -8,16 +9,15 @@ from wtforms.validators import DataRequired
 from tensorflow.keras.preprocessing import image
 from werkzeug.utils import secure_filename
 from functools import wraps
+from PIL import Image
 import numpy as np
 import tensorflow as tf
 import random
 import os
 import time
-import base64
 import hashlib
 import logging
 import secrets
-import html
 
 # ===============================
 # Deterministic inference
@@ -33,7 +33,7 @@ app = Flask(__name__)
 
 app.config.update(
     SECRET_KEY=secrets.token_hex(32),
-    MAX_CONTENT_LENGTH=30 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=30 * 1024 * 1024,  # 30 MB
     WTF_CSRF_TIME_LIMIT=None,
     UPLOAD_FOLDER="uploads"
 )
@@ -59,28 +59,22 @@ logging.basicConfig(
 # Load TFLite model
 # ===============================
 try:
-    # Load TFLite model
     interpreter = tf.lite.Interpreter(model_path="xception_quantized.tflite")
     interpreter.allocate_tensors()
-    logging.info("TFLite model loaded successfully")
-    
-    # Get model details
+
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
-    logging.info(f"Input shape: {input_details[0]['shape']}")
-    logging.info(f"Output shape: {output_details[0]['shape']}")
-    
+
+    logging.info("TFLite model loaded successfully")
+
 except Exception as e:
     logging.error(f"Model load failed: {e}")
     interpreter = None
-    input_details = None
-    output_details = None
 
 # ===============================
 # Constants
 # ===============================
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png"}
 MAX_FILE_SIZE = 30 * 1024 * 1024
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -106,8 +100,6 @@ def sanitize_filename(filename):
     return f"{name}_{int(time.time())}{ext}"
 
 def validate_file_security(file):
-    errors = []
-
     if not file or file.filename == "":
         return ["No file provided"]
 
@@ -115,30 +107,23 @@ def validate_file_security(file):
     size = file.tell()
     file.seek(0)
 
+    errors = []
+
     if size > MAX_FILE_SIZE:
         errors.append("File exceeds 30MB limit")
 
     if not allowed_file(file.filename):
         errors.append("Invalid file extension")
 
-    from PIL import Image
-
     try:
         img = Image.open(file)
-        img = img.convert("RGB")  # force clean decode
-        file.seek(0)
-    except Exception as e:
+        img.verify()
+    except Exception:
         errors.append("Invalid or corrupted image file")
-        
-        # Check if it's JPEG or PNG by checking format
-        if img.format not in ['JPEG', 'PNG', 'JPG']:
-            errors.append(f"Invalid image format: {img.format}")
-    except Exception as e:
-        errors.append(f"Invalid image file: {str(e)}")
     finally:
         file.seek(0)
 
-    return errors 
+    return errors
 
 def generate_file_hash(path):
     h = hashlib.sha256()
@@ -151,34 +136,24 @@ def predict_image(path):
     if not interpreter:
         raise Exception("Model not loaded")
 
-    # Load and preprocess image
-    img = image.load_img(path, target_size=(299, 299), color_mode="rgb")
+    img = image.load_img(path, target_size=(299, 299))
     arr = image.img_to_array(img)
     arr = np.expand_dims(arr, axis=0) / 255.0
-    
-    # Ensure correct dtype for quantized model
-    if input_details[0]['dtype'] == np.uint8:
-        # Quantized model expects uint8 input
+
+    if input_details[0]["dtype"] == np.uint8:
         arr = (arr * 255).astype(np.uint8)
     else:
-        # Float model expects float32
         arr = arr.astype(np.float32)
 
-    # Set input tensor
-    interpreter.set_tensor(input_details[0]['index'], arr)
-    
-    # Run inference
+    interpreter.set_tensor(input_details[0]["index"], arr)
     interpreter.invoke()
-    
-    # Get output tensor
-    output = interpreter.get_tensor(output_details[0]['index'])
-    
-    # Handle quantized output if needed
-    if output_details[0]['dtype'] == np.uint8:
-        # Dequantize output
-        scale, zero_point = output_details[0]['quantization']
+
+    output = interpreter.get_tensor(output_details[0]["index"])
+
+    if output_details[0]["dtype"] == np.uint8:
+        scale, zero_point = output_details[0]["quantization"]
         output = scale * (output.astype(np.float32) - zero_point)
-    
+
     pred = float(output[0][0])
     label = "Real" if pred > 0.5 else "Fake"
     confidence = pred if pred > 0.5 else 1 - pred
@@ -199,23 +174,25 @@ def index():
 @limiter.limit("60 per minute")
 @security_validate
 def predict():
-    file = request.files.get("image")
+    if "image" not in request.files:
+        return jsonify({"error": "No image uploaded"}), 400
 
+    file = request.files["image"]
     errors = validate_file_security(file)
+
     if errors:
         return jsonify({"error": "; ".join(errors)}), 400
 
     filename = sanitize_filename(file.filename)
     path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    img = Image.open(file).convert("RGB")
-    img.thumbnail((2048, 2048))
-    img.save(path, "JPEG", quality=95)
 
     try:
+        img = Image.open(file).convert("RGB")
+        img.thumbnail((2048, 2048))
+        img.save(path, "JPEG", quality=95)
+
         label, confidence = predict_image(path)
         file_hash = generate_file_hash(path)
-
-        logging.info(f"{filename} | {label} | {confidence}")
 
         return jsonify({
             "label": label,
@@ -240,36 +217,41 @@ def security_headers(res):
     res.headers["X-Frame-Options"] = "DENY"
     res.headers["X-XSS-Protection"] = "1; mode=block"
     res.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    res.headers['Content-Security-Policy'] = (
-    "default-src 'self' https://cdnjs.cloudflare.com; "
-    "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
-    "script-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; "
-    "font-src 'self' https://cdnjs.cloudflare.com; "
-    "frame-src https://www.youtube.com https://www.youtube-nocookie.com;"
+    res.headers["Content-Security-Policy"] = (
+        "default-src 'self' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "script-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self' https://cdnjs.cloudflare.com; "
+        "frame-src https://www.youtube.com https://www.youtube-nocookie.com;"
     )
-
     return res
 
-    @app.errorhandler(413)
-    def request_entity_too_large(error):
-        return jsonify({
-            "error": "File too large. Maximum allowed size is 30 MB."
-        }), 413
-    
-    
-    @app.errorhandler(500)
-    def internal_error(error):
-        return jsonify({
-            "error": "Internal server error during prediction."
-        }), 500
-        
+# ===============================
+# JSON Error Handlers
+# ===============================
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"error": "File too large. Maximum allowed size is 30 MB."}), 413
+
+@app.errorhandler(RateLimitExceeded)
+def rate_limit_handler(e):
+    return jsonify({"error": "Too many requests. Please slow down."}), 429
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({"error": "Invalid request or image file."}), 400
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error during prediction."}), 500
+
 # ===============================
 # Run
 # ===============================
 if __name__ == "__main__":
     app.run(
         debug=False,
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=int(os.environ.get("PORT", 5000))
     )
