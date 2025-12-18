@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; script-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com;">
     <title>Deepfake Detection Tool | Apex Broadcasting Network</title>
+    <link rel="icon" type="image/png" href="/static/Logo.jpg">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <body style="zoom: 0.75; -moz-transform: scale(0.75); -moz-transform-origin: 0 0;">
     <style>
@@ -34,6 +35,7 @@
             animation: pulse 15s ease-in-out infinite;
             pointer-events: none;
             z-index: 0;
+            
         }
 
         @keyframes pulse {
@@ -727,6 +729,14 @@
                     <h3>Upload Image for Analysis</h3>
                 </div>
                 <p class="upload-description">Supported formats: JPEG, PNG • Maximum size: 10MB</p>
+
+                <div class="quality-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>
+                        For best accuracy, upload the original image.
+                        Avoid screenshots, social media downloads, or compressed files, as they may reduce detection reliability.
+                    </span>
+                </div>
                 
                 <form action="/predict" method="post" enctype="multipart/form-data" class="upload-form">
                     <div class="file-upload-area" id="fileUploadArea">
