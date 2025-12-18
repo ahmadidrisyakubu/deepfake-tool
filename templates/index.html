@@ -34,8 +34,25 @@
                         radial-gradient(circle at 80% 80%, rgba(147, 51, 234, 0.1) 0%, transparent 50%);
             animation: pulse 15s ease-in-out infinite;
             pointer-events: none;
-            z-index: 0;
-            
+            z-index: 0;    
+        }
+    
+        .quality-warning {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid #f59e0b;
+            color: #fde68a;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        
+        .quality-warning i {
+            color: #f59e0b;
+            font-size: 1.2em;
         }
 
         @keyframes pulse {
