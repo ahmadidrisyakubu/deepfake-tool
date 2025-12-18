@@ -33,7 +33,7 @@ app = Flask(__name__)
 
 app.config.update(
     SECRET_KEY=secrets.token_hex(32),
-    MAX_CONTENT_LENGTH=10 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=30 * 1024 * 1024,
     WTF_CSRF_TIME_LIMIT=None,
     UPLOAD_FOLDER="uploads"
 )
@@ -81,7 +81,7 @@ except Exception as e:
 # ===============================
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png"}
-MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_FILE_SIZE = 30 * 1024 * 1024
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
@@ -116,17 +116,19 @@ def validate_file_security(file):
     file.seek(0)
 
     if size > MAX_FILE_SIZE:
-        errors.append("File exceeds 10MB limit")
+        errors.append("File exceeds 30MB limit")
 
     if not allowed_file(file.filename):
         errors.append("Invalid file extension")
 
+    from PIL import Image
+
     try:
-        from PIL import Image
-        # Try to open as image to validate
         img = Image.open(file)
-        img.verify()  # Verify it's a valid image
-        file.seek(0)  # Reset file pointer
+        img = img.convert("RGB")  # force clean decode
+        file.seek(0)
+    except Exception as e:
+        errors.append("Invalid or corrupted image file")
         
         # Check if it's JPEG or PNG by checking format
         if img.format not in ['JPEG', 'PNG', 'JPG']:
@@ -150,7 +152,7 @@ def predict_image(path):
         raise Exception("Model not loaded")
 
     # Load and preprocess image
-    img = image.load_img(path, target_size=(299, 299))
+    img = image.load_img(path, target_size=(299, 299), color_mode="rgb")
     arr = image.img_to_array(img)
     arr = np.expand_dims(arr, axis=0) / 255.0
     
@@ -205,7 +207,9 @@ def predict():
 
     filename = sanitize_filename(file.filename)
     path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(path)
+    img = Image.open(file).convert("RGB")
+    img.thumbnail((2048, 2048))
+    img.save(path, "JPEG", quality=95)
 
     try:
         label, confidence = predict_image(path)
