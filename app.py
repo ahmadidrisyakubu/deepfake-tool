@@ -251,6 +251,19 @@ def security_headers(res):
 
     return res
 
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        return jsonify({
+            "error": "File too large. Maximum allowed size is 30 MB."
+        }), 413
+    
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        return jsonify({
+            "error": "Internal server error during prediction."
+        }), 500
+        
 # ===============================
 # Run
 # ===============================
