@@ -1127,7 +1127,7 @@
             reader.onload = e => uploadedImage.src = e.target.result;
             reader.readAsDataURL(file);
 
-            displayFilename.textContent = file.name;
+            displayFilename.textContent = "Uploaded image";
 
             resultsSection.scrollIntoView({ behavior: 'smooth' });
         }
